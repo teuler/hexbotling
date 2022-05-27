@@ -13,6 +13,7 @@
 # 2020-01-01, v1.4, micropython.native
 # 2020-10-31, v1.5, use `languageID` instead of `ID`
 # 2021-02-28, v1.6, compatibility w/ rp2
+# 2022-05-05, v1.7, support limits to the timing
 # ----------------------------------------------------------------------------
 import array
 from robotling_lib.misc.helpers import timed_function
@@ -39,16 +40,17 @@ class Servo(ServoBase):
   """Simplified interface class for servos using PWMOut."""
 
   def __init__(self, pin, freq=50, us_range=DEF_RANGE_US,
-               ang_range=DEF_RANGE_DEG, verbose=False):
+               ang_range=DEF_RANGE_DEG, us_limits=DEF_RANGE_US,
+               verbose=False):
     """ Initialises the pin that connects to the servo, with `pin` as a pin
-        number, the frequency `freq` of the signal (in Hz), the minimun
-        and maximum supported timing (`us_range`), and the respective angular
-        range (`ang_range`) covered.
+        number, the frequency `freq` of the signal (in Hz), the timing
+        (`us_range`) for the given angular range (`ang_range`), and the
+        timing limits (`us_limits`).
         If `verbose` == True then angle and timing is logged; useful for
         setting up a new servo (range).
     """
-    super().__init__(freq, us_range, ang_range, verbose)
-    self._pwm      = dio.PWMOut(pin, freq=freq, duty=0)
+    super().__init__(freq, us_range, ang_range, us_limits, verbose)
+    self._pwm = dio.PWMOut(pin, freq=freq, duty=0)
     self._max_duty = self._pwm.max_duty
     if verbose:
       print("Servo at pin {0} ({1} Hz) ready.".format(pin, freq))
@@ -77,7 +79,7 @@ class Servo(ServoBase):
       self._pwm.deinit()
     except:
       pass
-
+    
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   @timed_function
   def write_us_timed(self, t_us):
