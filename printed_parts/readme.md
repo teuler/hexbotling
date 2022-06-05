@@ -1,6 +1,6 @@
 ## 3D printed parts
 
-For [OpenSCAD](http://openscad.org/)-code files, see [here](https://github.com/teuler/hexbotling/tree/main/printed_parts/openscad_files)).
+For [OpenSCAD](http://openscad.org/)-code files, see [subfolder](https://github.com/teuler/hexbotling/tree/main/printed_parts/openscad_files).
 
 - `body_frame_v1.stl` - Frame of the robot, to which the legs are attached.
 - `leg_coxa_femur_v1.stl` - Servo holder, which serves as base element for _coxa_ and _femur_. Note that the servo holder for the _coxa_ is integrated into the robot's frame
