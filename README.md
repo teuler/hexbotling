@@ -6,4 +6,5 @@ Check out the [Wiki](https://github.com/teuler/hexbotling/wiki) for details and 
 
 ### Release Notes
 
+* 2022-06-05 - `.stl` files for legs and body frame added; `.scad` code for these parts added as well.
 * 2022-04-19 - Initial release
