@@ -2,7 +2,11 @@
 
 Hexbotling is a robotic project in progress. The goal is a relatively small and simple, 3D printed walking robot with 6 legs and 2 degrees-of-freedom (2DOF) each. Instead of documenting a finished project, I will show the development. 
 
-Check out the [Wiki](https://github.com/teuler/hexbotling/wiki) for details and videos.
+Check out the [Wiki](https://github.com/teuler/hexbotling/wiki) for details.
+
+The following videos are available:
+* [How it began - Prototyping a leg](https://youtu.be/HZH1UBr0M4s)
+* [Preview 1 - First steps](https://youtu.be/tBBJNqaDOq4)
 
 ### Release Notes
 
