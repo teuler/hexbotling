@@ -44,7 +44,7 @@ function PCB_servo2040_metrics()
      ]];
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -      
-module PCB_servo2040(holes_only=false) {
+module PCB_servo2040(holes_only=false, screw_only=false) {
   // Creates a Pimoroni servo2040 board
   //
   _temp = PCB_servo2040_metrics();
@@ -63,8 +63,9 @@ module PCB_servo2040(holes_only=false) {
     for(xy=_xy) {    
       translate([xy[0], xy[1], -2])
       cylinder(h=_h, r=2.7/2, $fn=_fn);
-      translate([xy[0], xy[1], 15])
-      cylinder(h=15, r=2.3, $fn=_fn);
+      if(!screw_only) 
+        translate([xy[0], xy[1], 15])
+        cylinder(h=15, r=2.3, $fn=_fn);
     }  
   }
 

@@ -49,6 +49,7 @@ module _arm1(px, py, pz, select) {
   }
 }
 
+
 module _arm2(px, py, pz, select) {
  // Creates the other side ("arm") of a clamp for the legs
  //
@@ -242,14 +243,14 @@ module Femur(pxyz=[0,0,0], wServo=false, select=0) {
 }
 
 // --------------------------------------------------------------------------------
-module Tibia(pxyz=[0,0,0], select=0, new=false) {
+module Tibia1(pxyz=[0,0,0], select=0) {
   // Creates the tibia
   //
   px = pxyz[0] +8;
   py = pxyz[1];
   pz = pxyz[2];
-  _rot = [0, 0, new?270:0];
-  _tra = [new?-16.5:0, new?25:0, 0];
+  _rot = [0, 0, 0];
+  _tra = [0, 0, 0];
   
   rotate([90,0,0])
   translate([30 +px, -5+py, 12+pz]) {
@@ -266,50 +267,7 @@ module Tibia(pxyz=[0,0,0], select=0, new=false) {
     color("Goldenrod", _alpha1)
     difference() {
       union() {
-        translate([39, -4.8, -9.75])       
-        if(new) {
-          rotate(_rot) 
-          translate(_tra +[0,-63.75,0])
-          difference() {
-            union() {
-              translate([36,10.8,-6.75]) 
-                cube([6,14.5,6]);  
-              translate([36,10.8,1]) 
-                cube([6,14.5,6]);  
-                
-              translate([50, -26, srv_base_dy/2-3.75]) 
-                cylinder(h=3, r=60, $fn=_fn);        
-                
-              // ...  
-            }   
-            union() {  
-              
-              /*
-              translate([-70,-65,0]) 
-                cube([100,130,5]);  
-              translate([25, 20, srv_base_dy/2-4.5]) 
-                cylinder(h=5, r=15, $fn=_fn);        
-              hull() {
-                translate([31, 45, srv_base_dy/2-4.5]) 
-                  cylinder(h=5, r=8, $fn=_fn);        
-                translate([55, 30, srv_base_dy/2-4.5]) 
-                  cylinder(h=5, r=2, $fn=_fn);        
-              }
-              _x = [53,52,49,43];
-              for(i=[0:3]) 
-                #hull() {
-                  translate([25+12, -11*i, srv_base_dy/2-4.5]) 
-                    cylinder(h=5, r=4, $fn=_fn);        
-                  //translate([25+30-3.5*i, 3-10*i, srv_base_dy/2-4.5]) 
-                  translate([_x[i], -11*i, srv_base_dy/2-4.5]) 
-                    cylinder(h=5, r=2, $fn=_fn);        
-                }
-              */
-            }
-          }  
-        
-        }
-        else {
+        translate([39, -4.8, -9.75]) {      
           translate([0,0,-1])
           linear_extrude(height=2, slices=25, scale=1.0, $fn=_fn)
           polygon([
@@ -348,7 +306,7 @@ module Tibia(pxyz=[0,0,0], select=0, new=false) {
                     cylinder(h=5, r=2, $fn=_fn);        
                 }
             }
-          }
+          }  
         }  
         // Link pin
         rotate(_rot) 
