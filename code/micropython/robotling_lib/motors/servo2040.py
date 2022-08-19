@@ -61,7 +61,7 @@ class Servo(ServoBase):
       self._srv.disable()
     except:
       pass
-    
+
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   @timed_function
   def write_us_timed(self, t_us):

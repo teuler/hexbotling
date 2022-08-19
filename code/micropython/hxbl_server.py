@@ -41,8 +41,8 @@ class Server(HexbotlingBase):
     global g_state, g_we
 
     glb.toLog(
-        "Hexbotling server (servo2040 board, software v{0}) "+
-        "w/ MicroPython {1} ({2})"
+        ("Hexbotling server (servo2040 board, software v{0}) "+
+         "w/ MicroPython {1} ({2})")
         .format(__version__, pf.sysInfo[2], pf.sysInfo[0]), head=False,
         color=ansi.CYAN
       )
@@ -99,44 +99,44 @@ class Server(HexbotlingBase):
       self.power_down()
       while g_state is not glb.STA_OFF:
         self.sleep_ms(25)
-    g_we.servos_off()
-    self.uodatePowerDown()
+    self.updatePowerDown()
     self.printReport()
     glb.toLog("... done.", head=False)
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   @property
   def state(self):
-    """ Get `state` as a constant `STA_xxx` (`hxbl_global.py`)
-    """
+    """ Get `state` as a constant `STA_xxx` (`hxbl_global.py`) """
     global g_state
     return g_state
 
   @property
   def direction(self):
-    """ Get current movement direction (see `turn()` for details)
-    """
+    """ Get current movement direction (see `turn()` for details) """
     global g_move_dir
     return g_move_dir
 
   @property
   def exit_requested(self):
-    """ Get status of user button; True if pressed during `sleep_ms()`
-    """
+    """ Get status of user button; True if pressed during `sleep_ms()` """
     return self._user_abort
 
   @property
   def velocity(self):
-    """ Get/set velocity, with 1.0 normal speed, <1 faster and >1 slower
-    """
+    """ Get/set velocity, with 1.0 normal speed, <1 faster and >1 slower """
     global g_move_vel
     return g_move_vel
-  @velocity.setter
-  def velocity(self, val):
-    global g_move_vel
-    g_move_vel = val
+
+  @property
+  def servo_load_A(self):
+    return g_we._servoI_A
+
+  @property
+  def servo_battery_V(self):
+    return g_we._servoU_V
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  #@timed_function
   def move_forward(self, wait_for_idle=False, reverse=False):
     """ Move straight forward using current gait and velocity.
         If `wait_for_idle` is True, then trigger action only when idle.
@@ -150,6 +150,7 @@ class Server(HexbotlingBase):
   def move_backward(self, wait_for_idle=False):
     self.move_forward(wait_for_idle, True)
 
+  #@timed_function
   def turn(self, dir, wait_for_idle=False):
     """ Turn using current gait and velocity; making with `dir` < 0 a left and
         `dir` > 0 a right turn. The size of `dir` (1 >= |`dir`| > 0) giving
@@ -161,11 +162,12 @@ class Server(HexbotlingBase):
       g_move_dir = max(min(dir, 1.0), -1.0)
       g_cmd = glb.CMD_MOVE
 
+  #@timed_function
   def stop(self):
     """ Stop if walking
     """
     global g_cmd, g_we_state
-    if g_we_state in [glb.STA_WALKING, glb.STA_TURNING]:
+    if g_we_state in [glb.STA_WALKING, glb.STA_REVERSING, glb.STA_TURNING]:
       g_cmd = glb.CMD_STOP
 
   def power_down(self):
@@ -175,7 +177,23 @@ class Server(HexbotlingBase):
     g_move_dir = 0.
     g_cmd = glb.CMD_POWER_DOWN
 
+  def set_msg_LED(self, state):
+    """ Set message LED on or off
+    """
+    global g_we
+    g_we.set_LED(state)
+
+  def set_gait_parameters(self, velocity=None, lift_deg=None):
+    """ Set gait parameters
+    """
+    global g_move_vel, g_we
+    if velocity is not None:
+      g_move_vel = velocity
+    if lift_deg is not None:
+      g_we._Gait.leg_lift_angle = lift_deg
+
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  #@timed_function
   def sleep_ms(self, dur_ms=0, period_ms=-1, callback=None):
     """ This function is an alternative to `time.sleep_ms()`; it sleeps but
         also keep the robot's hardware updated.
@@ -244,6 +262,7 @@ class Server(HexbotlingBase):
       time.sleep_ms(dur_ms)
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  #@timed_function
   def _task_core0(self):
     """ This is the core 0-version of the routine that keeps the hardware
         updated and responds to commands (e.g. move, turn).
@@ -305,72 +324,4 @@ class Server(HexbotlingBase):
     finally:
       self.updateEnd()
 
-  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-  '''
-  @staticmethod
-  def _task_core1():
-    """ This is the core 1-version of the routine that keeps the hardware
-        updated and responds to commands (e.g. move, turn).
-        - It runs independently on core 1; in parallel to the main program on
-          core 0.
-        - It communicates via global variables.
-    """
-    global g_we_state, g_state, g_counter
-    global g_cmd, g_do_exit
-    global g_move_dir, g_move_rev
-    global g_we
-
-    # Loop
-    g_do_exit = False
-    try:
-      try:
-        g_we_state = glb.STA_IDLE
-
-        # Main loop ...
-        while g_state is not glb.STA_POWERING_DOWN:
-          if g_cmd is not glb.CMD_NONE:
-            # Handle new command ...
-
-            if g_cmd == glb.CMD_MOVE:
-              g_we.direction = g_move_dir
-              g_we.reverse = g_move_rev
-              g_we.walk()
-              if abs(g_move_dir) > 0.01:
-                g_state = glb.STA_TURNING
-              elif g_move_rev:
-                g_state = glb.STA_REVERSING
-              else:
-                g_state = glb.STA_WALKING
-
-            if g_cmd in [glb.CMD_STOP, glb.CMD_POWER_DOWN]:
-              # Stop or power down ...
-              g_we.stop()
-              g_state = glb.STA_STOPPING
-              g_do_exit = g_cmd == glb.CMD_POWER_DOWN
-
-            g_cmd = glb.CMD_NONE
-
-          # Wait for transitions to update state accordingly ...
-          if g_state == glb.STA_STOPPING and g_we_state == glb.STA_IDLE:
-            g_state = glb.STA_IDLE
-          if g_state == glb.STA_IDLE and g_do_exit:
-            g_state = glb.STA_POWERING_DOWN
-
-          # Spin everyone who needs spinning
-          g_we.spin()
-          g_we_state = g_we.state
-          g_counter += 1
-
-          # Wait for a little while
-          time.sleep_ms(25)
-          print(g_counter)
-
-      except KeyboardInterrupt:
-        pass
-
-    finally:
-      g_we.deinit()
-      glb.toLog("Hardware thread ended.")
-      g_state = glb.STA_OFF
-  '''
 # ----------------------------------------------------------------------------

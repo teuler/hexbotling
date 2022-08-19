@@ -12,6 +12,10 @@
 # 2022-01-04, v1.5, Nano RP2040 Connect added, simplified (only linear)
 # 2022-05-05, v1.6, Calibration code added
 # 2022-05-08, v1.7, TRJ_LINEAR=Normal, TRJ_SINE=slow start and end move
+# 2022-06-11, v1.8, Allow setting last position after power-off
+# 2022-06-26, v1.8, Added option not to use `ulab`
+# 2022-08-10, v1.8, Added `trajectory` as property
+# 2022-08-10, v1.9, Added more trajectory types
 # ----------------------------------------------------------------------------
 import gc
 import time
@@ -23,11 +27,12 @@ import robotling_lib.misc.ansi_color as ansi
 try:
   from ulab import numpy as np
   ULAB = True
-except ModuleNotFoundError:
+except ImportError:
+  import math as np
   ULAB = False
 
 # pylint: disable=bad-whitespace
-__version__        = "0.1.7.0"
+__version__        = "0.1.9.0"
 RATE_MS            = const(10)  # 5=hangs, 15...20=ok, 25=not continues
 HARDWARE_TIMER     = const(0)
 # pylint: enable=bad-whitespace
@@ -41,8 +46,10 @@ class ServoManager(object):
   TYPE_VERTICAL   = const(2)
   TYPE_SENSOR     = const(3)
 
-  TRJ_LINEAR      = const(0)
-  TRJ_SINE        = const(1)
+  TRJ_LINEAR      = const(1)
+  TRJ_SINE        = const(2)
+  TRJ_RAMP_UP     = const(3)
+  TRJ_RAMP_DOWN   = const(4)
   # pylint: enable=bad-whitespace
 
   def __init__(self, n, verbose=False):
@@ -67,6 +74,7 @@ class ServoManager(object):
     self._mm18 = None
     self._isMoving = False
     self._isFirstMove = True
+    self._traject = TRJ_LINEAR
     self._Timer = Timer() if pf.isRP2 else Timer(HARDWARE_TIMER)
 
   def add_servo(self, i, servoObj, pos=0):
@@ -95,6 +103,17 @@ class ServoManager(object):
     if i in range(self._nChan) and self._Servos[i] is not None:
       self._servo_type[i] = type
 
+  def define_servo_pos(self, _pos):
+    """ Define servo position (from angle) without moving the servo,
+        e.g. to define the last starting position at power-off
+    """
+    if len(_pos) == self._nChan:
+      for i in range(self._nChan):
+        if self._Servos[i] is not None:
+          t = self._Servos[i].angle_in_us(_pos[i])
+          self._servoPos[i] = t
+          self._currPosList[i] = t
+
   def turn_all_off(self, deinit=False):
     """ Turn all servos off
     """
@@ -116,7 +135,7 @@ class ServoManager(object):
     self.move(servos, pos, dt_ms, lin_vel)
 
   #@micropython.native
-  def move(self, servos, pos, dt_ms=0, traject=TRJ_LINEAR):
+  def move(self, servos, pos, dt_ms=0):
     """ Move the servos in the list to the positions given in `pos`.
         If `dt_ms` > 0, then it will be attempted that all servos reach the
         position at the same time (that is after `dt_ms` ms)
@@ -126,8 +145,11 @@ class ServoManager(object):
 
     # Prepare new move
     n = 0
-    trj = traject
+    trj = self._traject
+    '''
     nSteps = dt_ms /RATE_MS
+    '''
+    nSteps = int(dt_ms /RATE_MS)
     ser = self._Servos
     sdl = self._SIDList
     tpl = self._targetPosList
@@ -144,11 +166,37 @@ class ServoManager(object):
         # A time period is given, therefore calculate the step sizes for this
         # servo's move, with ...
         p = spo[SID]
-        if traject == TRJ_SINE and ULAB:
+        if trj > TRJ_LINEAR:
           ssl[n] = tpl[n] -p  # whole step
           cpl[n] = p          # current position
-          _a = np.array([np.sin((i+1)/nSteps*np.pi) for i in range(int(nSteps-1))])
-          tnl[n] = np.sum(_a) # sum of sine values
+          lim = nSteps/np.pi
+          ofs = 0
+          if ULAB:
+            # ULAB version
+            if trj == TRJ_SINE:
+              pass
+            elif trj == TRJ_RAMP_UP or trj == TRJ_RAMP_DOWN:
+              assert False, "ULAB versions of `TRJ_RAMP_xxx` not implemented"
+            _a = np.array(
+                [np.sin((i+1)/lim +ofs)**3 for i in range(nSteps-1)]
+              )
+            tnl[n] = np.sum(_a)
+          else:
+            # Standard math version
+            if trj == TRJ_SINE:
+              pass
+            elif trj == TRJ_RAMP_UP:
+              lim = nSteps/(np.pi/2)
+            elif trj == TRJ_RAMP_DOWN:
+              lim = nSteps/(np.pi/2)
+              ofs = np.pi/2
+            _a = array.array(
+                "f", [np.sin((i+1)/lim +ofs)**3 for i in range(nSteps-1)]
+              )
+            tnl[n] = 0
+            for j in range(len(_a)):
+              tnl[n] += _a[j]
+
         else:
           # Linear move (each step has the same size)
           s = (tpl[n] -p) /nSteps
@@ -158,11 +206,13 @@ class ServoManager(object):
         # Move directly, therefore update already the final position
         spo[SID] = tpl[iSr]
       n += 1
-    self._traject = traject
     self._iStep = 0
     self._nToMove = n
     self._dt_ms = dt_ms
+    '''
     self._nSteps = int(nSteps)
+    '''
+    self._nSteps = nSteps
     self._nStTotal = self._nSteps
 
     # Initiate move
@@ -179,7 +229,7 @@ class ServoManager(object):
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   #@timed_function
-  #@micropython.native
+  @micropython.native
   def _cb(self, value):
     if self._isMoving:
       # Update every servo in the list
@@ -194,12 +244,22 @@ class ServoManager(object):
       iSt = self._iStep
       nST = self._nStTotal
       tnl = self._trajNormList
+      trj = self._traject
       while iSr >= 0:
         if not spo[sdl[iSr]] == tpl[iSr]:
           if nSt > 0:
             # Move is ongoing, update servo position ...
-            if self._traject == TRJ_SINE:
-              cpl[iSr] += ssl[iSr] *np.sin((iSt+1)/nST *np.pi) /tnl[iSr]
+            if trj > TRJ_LINEAR:
+              if trj == TRJ_SINE:
+                lim = np.pi
+                ofs = 0
+              elif trj == TRJ_RAMP_UP:
+                lim = np.pi/2
+                ofs = 0
+              elif trj == TRJ_RAMP_DOWN:
+                lim = np.pi/2
+                ofs = np.pi/2
+              cpl[iSr] += ssl[iSr] *np.sin((iSt+1)/nST *lim +ofs)**3 /tnl[iSr]
               ser[sdl[iSr]].write_us(cpl[iSr])
             else:
               ser[sdl[iSr]].write_us(cpl[iSr])
@@ -223,6 +283,14 @@ class ServoManager(object):
     """
     return self._isMoving
 
+  @property
+  def trajectory(self):
+    return self._traject
+  @trajectory.setter
+  def trajectory(self, traj):
+    if traj in [TRJ_SINE, TRJ_LINEAR, TRJ_RAMP_UP, TRJ_RAMP_DOWN]:
+      self._traject = traj
+
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   def calibrate(self, servos=[]):
     """ Interactive calibration of all given servos
@@ -230,7 +298,7 @@ class ServoManager(object):
     print()
     print("Interactive servo calibration")
     print("=============================")
-    
+
     servos = servos if len(servos) > 0 else self._servo_number
     new_pos_us = []
     for i in servos:

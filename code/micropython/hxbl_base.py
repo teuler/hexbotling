@@ -51,7 +51,7 @@ class HexbotlingBase(object):
     return self._ID
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-  def uodatePowerDown(self):
+  def updatePowerDown(self):
     """ Record run time
     """
     self._run_duration_s = time.time() -self._start_s
