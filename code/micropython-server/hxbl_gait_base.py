@@ -25,6 +25,8 @@ class GaitBase(object):
   def __init__(self):
     # Initializing ...
     self._gaitType = "n/a"
+    self._subtypes = [0]
+    self._subtype = 0
     self.reset()
 
   def reset(self):
@@ -36,13 +38,21 @@ class GaitBase(object):
     self._aCoxaSwing_deg = 0
     self._aLgLift_deg = 0
 
-  def get_next_servo_pos(self, stop=False, turn_dir=0):
+  def get_next_servo_pos(self, stop=False, turn_dir=0, rev=False):
     """ Returns a tuple consisting of the duration of the move (in ms) and an
         array of angles for all servos for the current gait and phase).
     """
     return None
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  """ Gait subtype """
+  @property
+  def subtype(self):
+    return self._subtype
+  @subtype.setter
+  def subtype(self, val):
+    self._set_subtype(val)
+
   """ Leg swing angle (in degrees) """
   @property
   def leg_swing_angle(self):

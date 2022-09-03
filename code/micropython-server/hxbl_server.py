@@ -88,7 +88,6 @@ class Server(HexbotlingBase):
       toLog("CPU speed set to {0} MHz".format(self.Cfg.SRV_CPU_SPEED /10**6))
     '''
     g_state = glb.STA_IDLE
-    glb.toLog("Ready.", head=False)
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   def deinit(self):
@@ -163,12 +162,15 @@ class Server(HexbotlingBase):
       g_cmd = glb.CMD_MOVE
 
   #@timed_function
-  def stop(self):
-    """ Stop if walking
+  def stop(self, wait_for_neutral=True):
+    """ Stop if walking; wait for stop if `wait_for_neutral`=== True
     """
     global g_cmd, g_we_state
     if g_we_state in [glb.STA_WALKING, glb.STA_REVERSING, glb.STA_TURNING]:
       g_cmd = glb.CMD_STOP
+      if wait_for_neutral:
+        while g_we_state is not glb.STA_IDLE:
+          self.sleep_ms(25)
 
   def power_down(self):
     """ Power down and end task
@@ -183,7 +185,13 @@ class Server(HexbotlingBase):
     global g_we
     g_we.set_LED(state)
 
-  def set_gait_parameters(self, velocity=None, lift_deg=None):
+  def set_pulse_LED_hue(self, _hue):
+    """ Set hue of pulsing LED
+    """
+    global g_we
+    g_we._Pixel.startPulse(_hue)
+
+  def set_gait_parameters(self, type=None, velocity=None, lift_deg=None):
     """ Set gait parameters
     """
     global g_move_vel, g_we
@@ -191,6 +199,8 @@ class Server(HexbotlingBase):
       g_move_vel = velocity
     if lift_deg is not None:
       g_we._Gait.leg_lift_angle = lift_deg
+    if type is not None:
+      g_we._Gait.subtype = type
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   #@timed_function

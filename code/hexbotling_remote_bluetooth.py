@@ -9,7 +9,6 @@
 # Copyright (c) 2018-2022 Thomas Euler
 # 2020-08-20, v1
 # 2022-07-17, v2 - adapted to Hexbotling
-#
 # ---------------------------------------------------------------------
 from os import environ
 environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
@@ -18,16 +17,20 @@ import asyncio
 import array
 import numpy as np
 import pygame
+import time
 import modules.joystick as joy
 from argparse import ArgumentParser
 from hexbotling.robotling_lib.misc.messenger import MessengerCOM
 import hexbotling.hxbl_global as glb
+import hexbotling.hxbl_comm as com
 
 # pylint: disable=bad-whitespace
 __version__        = "0.2.0.0"
 COM_PORT           = 7
 MSG_ARRAY_TYPE     = "b"
-JY_ZERO_LIMIT      = 0.1
+JY_ZERO_LIMIT      = 0.2
+MAX_GAIT_TYPE      = 1
+CHECK_PING_TIME_S  = 10
 # pylint: ensable=bad-whitespace
 
 # ---------------------------------------------------------------------
@@ -35,6 +38,14 @@ def parseCmdLn():
   parser = ArgumentParser()
   parser.add_argument('-p', '--port', type=str, default=COM_PORT)
   return parser.parse_args()
+
+def wait_ms(dt):
+  time.sleep(dt/1_000)
+
+def exit_on_not_connected():
+  if not Com.is_connected:
+    print("\rERROR: Could get a serial connection")
+    exit()
 
 # ---------------------------------------------------------------------
 class Params(object):
@@ -45,6 +56,7 @@ class Params(object):
     self._is_changed = False
     self._is_turbo = False
     self._lift_deg = 25
+    self._type = 0
 
   def reset(self):
     self._is_changed = False
@@ -89,16 +101,33 @@ class Params(object):
       self._lift_deg = val
       self._is_changed = True
 
+  @property
+  def type(self):
+    return self._type
+
+  def inc_type(self, inc=1):
+    if inc > 0:
+      self._type = self._type +1 if self._type < MAX_GAIT_TYPE else 0
+    elif inc < 0:
+      self._type = self._type -1 if self._type > 0 else MAX_GAIT_TYPE
+    else:
+      return
+    self._is_changed = True
+
   def __repr__(self):
-    return f"dir={self.dir} vel={self.vel} rev={self.rev}"
+    return (
+        f"dir={self.dir} vel={self.vel} rev={self.rev} " +
+        f"lift_deg={self._lift_deg} type={self._type}"
+      )
+    return
 
 # ---------------------------------------------------------------------
-def getCmdFromJoystickInput():
+def getCmdMsgFromJoystickInput():
   """ Generate a new command based on the joystick input, if any
   """
   # Initialize input parameters
   params_changed = False
-  cmd = None
+  msg = None
 
   # Button `A` prints help
   bA = JS.BtnA.pressed
@@ -107,6 +136,7 @@ def getCmdFromJoystickInput():
     print("`B`                - Turbo on/off")
     print("`Y`                - Feet high/low")
     print("`X`                - Shutdown")
+    print("left hat up/down   - Change gait")
     print("`Back`             - Exit program")
 
   # Button `B` toggles "turbo"
@@ -118,13 +148,21 @@ def getCmdFromJoystickInput():
   # Button `X` shuts robot down
   bX = JS.BtnX.pressed
   if bX is not None and bX:
-    cmd = array.array(MSG_ARRAY_TYPE, [glb.CMD_POWER_DOWN])
+    msg = array.array(MSG_ARRAY_TYPE, [0, com.MSG_POWER_DOWN])
 
   # Button `Y` toggles foot height
   bY = JS.BtnY.pressed
   if bY is not None and bY:
-    params._lift_deg = 30 if params._lift_deg != 30 else 50
+    params._lift_deg = 25 if params._lift_deg != 25 else 50
     print("Foot lift height is {0}°".format(params._lift_deg))
+
+  # The left hat controls gait
+  hatL = JS.HatL.value
+  if hatL is not None:
+    if hatL[1] != 0:
+      params.inc_type(hatL[1])
+      msg = array.array(MSG_ARRAY_TYPE, [0, com.MSG_GAIT, params.type])
+      print("Gait type changed to {0}".format(params.type))
 
   # Control walking ...
   xyL = JS.StickL.xy
@@ -142,7 +180,7 @@ def getCmdFromJoystickInput():
       v = np.sqrt(xyL[0]**2 +xyL[1]**2)
       if v < JY_ZERO_LIMIT:
         params.vel = 0
-        cmd = array.array(MSG_ARRAY_TYPE, [glb.CMD_STOP])
+        msg = array.array(MSG_ARRAY_TYPE, [0, com.MSG_STOP])
       else:
         max_vel = 127 if params._is_turbo else 64
         vel = min(max(int(v *max_vel), -127), 127)
@@ -150,24 +188,25 @@ def getCmdFromJoystickInput():
         params.vel = vel
         params.rev = xyL[1] > 0 and vel > 0
 
-    if not cmd and params.is_changed:
+    if not msg and params.is_changed:
       dta = [
-          glb.CMD_MOVE,
+          0, com.MSG_MOVE,
           params.dir, params.vel, int(params.rev),
           params._lift_deg
         ]
-      cmd = array.array(MSG_ARRAY_TYPE, dta)
+      msg = array.array(MSG_ARRAY_TYPE, dta)
 
-  return cmd
+  return msg
 
 # ---------------------------------------------------------------------
 async def run():
   """ Run the loop
   """
   global isReady, Msg
+  tLastResponse = time.monotonic()
 
   # Loop
-  while Msg.is_connected and isReady:
+  while Com.is_connected and isReady:
     try:
       # Check for pygame events
       for ev in pygame.event.get():
@@ -179,18 +218,23 @@ async def run():
 
       if isReady:
         # Check for input from joystick
-        cmd = getCmdFromJoystickInput()
-        if cmd:
-          Msg.write(cmd)
-          res = Msg.read()
-          if res:
-            if res[1] == glb.CMD_STA:
+        msg = getCmdMsgFromJoystickInput()
+        if msg:
+          Com.send(msg[1:])
+          print("Sent    : " +Com.msgtoStr(msg))
+          res = Com.receive()
+          if res and len(res) >= 2:
+            tLastResponse = time.monotonic()
+            if res[1] == com.MSG_STA:
               # Ack/status message received, parse and print ...
-              print(glb.CMD_STRS[glb.CMD_STA].format(
-                  res[2],    # last command idea
-                  res[3]/10, # mean servo load in [A*10]
-                  res[4]/10) # servo battery voltage in [V*10]
-                )
+              print("Received: " +Com.msgtoStr(res))
+
+        # Check periodically, if server is connected
+        if (time.monotonic() -tLastResponse) > CHECK_PING_TIME_S:
+          print("Pinging server ...")
+          Com.ping_server(f_wait_ms=wait_ms, tOut_s=20)
+          exit_on_not_connected()
+          tLastResponse = time.monotonic()
 
         # Keep events running
         Clock.tick(5)
@@ -215,10 +259,10 @@ if __name__ == '__main__':
 
   # Create messenger object
   print("Opening COM port ... ", end="")
-  Msg = MessengerCOM(chan=args.port, type=MSG_ARRAY_TYPE)
-  if not Msg.is_connected:
-    print("\rERROR: Could get a serial connection")
-    exit()
+  Com = com.Communicator(MessengerCOM(chan=args.port, type=MSG_ARRAY_TYPE))
+  print("Pinging server ...")
+  Com.ping_server(f_wait_ms=wait_ms, tOut_s=20)
+  exit_on_not_connected()
 
   # Access joystick ...
   try:

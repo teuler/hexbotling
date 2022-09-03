@@ -6,8 +6,10 @@
 # The MIT License (MIT)
 # Copyright (c) 2022 Thomas Euler
 # 2022-07-10, v1.0
+# 2022-08-19, v1.1 - `ping` method to check for connection added.
+# 2022-08-19, v1.2 - removed `ping`; belongs to a higher level
 #
-# Tested with HC05 blutooth module
+# Tested with HC05 bluetooth module
 # HC05     servo2040
 # ----     ----
 # VCC  ->  5V
@@ -28,7 +30,7 @@ except ModuleNotFoundError:
   MICROPYTHON = False
 
 # pylint: disable=bad-whitespace
-__version__        = "0.1.0.0"
+__version__        = "0.1.2.0"
 
 UART_CHAN          = const(0)
 UART_PORT          = const(7)
@@ -62,11 +64,12 @@ class Messenger(object):
     self._uart_baud = baud
     self._tout_ms = UART_TIMEOUT_MS
     self._toLog = fToLog
-    self._isReady = False
     self._arrItemLen = MSG_ARR_TYPES[type]
     self._minMsgLen = MSG_BASE_LEN +self._arrItemLen
     self._arrType = type
-    self._isVerbose = True
+    self._isReady = False
+    self._isConnected = False
+    self._isVerbose = False
 
   def deinit(self):
     pass
@@ -79,6 +82,14 @@ class Messenger(object):
   @timeout_ms.setter
   def timeout(self, t):
     self._tout_ms = max(t, 0)
+
+  @property
+  def verbose(self):
+    """ Get/set verbose """
+    return self._isVerbose
+  @verbose.setter
+  def verbose(self, val):
+    self._isVerbose = val > 0
 
   @property
   def available(self):
@@ -95,7 +106,8 @@ class Messenger(object):
       s = MSG_START +self._arrType.encode() +hexlify(arr) +MSG_END
       if not only_log:
         self._write(s +MSG_LF)
-      self._log(f"<- msg={s} ({list(data)})", head=False)
+      if self._isVerbose:
+        self._log(f"<- msg={s} ({list(data)})", head=False)
 
   def read(self):
     """ Read message and return data array or None, if an error occurred
@@ -105,13 +117,12 @@ class Messenger(object):
       if s is not None and len(s) >= self._minMsgLen:
         # Some message received
         n = len(s)
-        if self._isVerbose:
-          self._log(f"Received `{s}` ({n})", head=False)
         if s[0] == ord(MSG_START) and s[n-2] == ord(MSG_END):
           # Correct start and end characters, extract data array
           try:
             dta = array.array(self._arrType, unhexlify(s[2:n-2]))
-            self._log(f"-> msg={s}", head=False)
+            if self._isVerbose:
+              self._log(f"-> msg={s}", head=False)
             return dta
           except ValueError:
             self._log("Message parsing error", errC=self.ERR_INVALID_MSG)
@@ -153,12 +164,11 @@ class MessengerUART(Messenger):
           timeout=self._tout_ms,
           )
       self._sPort = f"UART{chan}"
-      self._isConnected = self._uart is not None
+      self._isReady = self._uart is not None
     except ValueError:
       self._log(f"Invalid UART parameters.", errC=self.ERR_UART_ERROR)
       return
-    self._isReady = self._isConnected
-    self._log(f"{self._sPort} connected w/ {baud} Bd.", green=True)
+    self._log(f"{self._sPort} open w/ {baud} Bd.", green=True)
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   def deinit(self):
@@ -199,9 +209,8 @@ class MessengerCOM(Messenger):
       return
     self._uart.flushInput()
     self._uart.flushOutput()
-    self._isConnected = self._uart.isOpen()
-    self._isReady = self._isConnected
-    self._log(f"{self._sPort} connected w/ {baud} Bd.", green=True)
+    self._isReady = self._uart.isOpen()
+    self._log(f"{self._sPort} open w/ {baud} Bd.", green=True)
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   def _write(self, bs):
@@ -215,7 +224,6 @@ class MessengerCOM(Messenger):
 
   @property
   def is_connected(self):
-    self._isConnected = self._uart and self._uart.isOpen()
     return self._isConnected
 
 # ----------------------------------------------------------------------------

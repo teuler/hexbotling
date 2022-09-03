@@ -11,6 +11,7 @@ import sys
 import time
 import hxbl_global as glb
 import hxbl_config as cfg
+import hxbl_comm as com
 from hxbl_server import Server
 from robotling_lib.misc.helpers import timed_function
 from robotling_lib.misc.messenger import MessengerUART
@@ -21,70 +22,71 @@ import hxbl_server
 def handleCmd(msgData):
   """ Handles command in `msgData`, returns ERR_OK or error code
   """
-  if len(msgData) < 2:
-    # Data array too short
-    return glb.ERR_INVALID_MSG, glb.CMD_NONE
+  res = Comm.check(msgData)
+  if res is not glb.ERR_OK:
+    # Invalid message
+    return res, com.MSG_NONE
 
   # Extract elements
   RSrv.set_msg_LED(True)
   errC = glb.ERR_OK
-  cmdID = msgData[1]
+  msgID = msgData[1]
   params = msgData[2:]
   nParams = len(params)
 
-  # Check number of parameters
-  if cmdID == glb.CMD_MOVE and nParams != glb.CMD_N_PARAMS[glb.CMD_MOVE]:
-    return glb.ERR_TOO_FEW_PARAMS, glb.CMD_NONE
-
   # Handle command ...
-  if cmdID == glb.CMD_STOP:
-    print("Cmd STOP")
-    RSrv.stop()
-    while RSrv.state is not glb.STA_IDLE:
-      RSrv.sleep_ms(25)
+  if msgID == com.MSG_STOP:
+    # Stop robot and wait until in neutral position
+    RSrv.stop(wait_for_neutral=True)
 
-  elif cmdID == glb.CMD_MOVE:
+  elif msgID == com.MSG_GAIT:
+    # Change gait
+    RSrv.stop(wait_for_neutral=True)
+    RSrv.set_gait_parameters(type=params[0])
+
+  elif msgID == com.MSG_MOVE:
+    # Move robot depending on parameters ...
     dir = min(max(params[0], -100), 100) /100
     vel = min(max(params[1]*2, 1), 250) / 100
     rev = params[2] > 0
     lft = params[3]
     RSrv.set_gait_parameters(velocity=vel, lift_deg=lft)
-
-    hxbl_server.g_we._tLastCmd = time.ticks_ms()
+    hxbl_server.g_we._tLastMsg = time.ticks_ms()
     if abs(dir) < 0.1:
-      print("Cmd `MOVE`", dir, vel, rev, lft)
+      # ... forward
       RSrv.move_forward(reverse=rev)
     else:
-      print("Cmd `TURN`", dir, vel, rev, lft)
+      # ... turn
       RSrv.turn(dir)
-    '''
-  elif cmdID == glb.CMD_SIT_DOWN:
+
+  elif msgID == com.MSG_POWER_DOWN:
+    # Power down
     pass
-  elif cmdID == glb.CMD_STAND_UP:
-    pass
-    '''
-  elif cmdID == glb.CMD_POWER_DOWN:
-    pass
+
+  elif msgID == com.MSG_PING:
+    # Client sent a ping, respond ...
+    Comm.send([com.MSG_PING])
 
   else:
     # Command not recognized
-    errC = glb.ERR_UNKNOWN_CMD
-    cmdID = glb.CMD_NONE
+    errC = glb.ERR_UNKNOWN_MSG
+    msgID = com.MSG_NONE
 
-  if errC is glb.ERR_OK:
-    sendStatus(cmdID)
+  if errC is glb.ERR_OK and msgID is not com.MSG_PING:
+    sendStatus(msgID)
   RSrv.set_msg_LED(False)
-  return errC, cmdID
+  return errC, msgID
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 #@timed_function
-def sendStatus(cmdID):
+def sendStatus(msgID):
   """ Confirm receipt/execution of command. Includes:
-      - command ID (`cmID`)
+      - message ID (`msgID`)
       - the servo load (in [A]*10)
       - the servo battery voltage (in [V]*10)
   """
-  Msgr.write(
-      [glb.CMD_STA, cmdID,
+  Comm.send(
+      [com.MSG_STA, msgID,
       int(RSrv.servo_load_A *10), int(RSrv.servo_battery_V *10)]
     )
 
@@ -93,15 +95,26 @@ if __name__ == "__main__":
 
   # Create server instance
   RSrv = Server(core=cfg.HW_CORE, verbose=True)
-  Msgr = MessengerUART(
-      chan=cfg.UART_CH, type="b", fToLog=glb.toLog,
+
+  # Create a communicator instance and wait for connection to client
+  Comm = com.Communicator(MessengerUART(
+      chan=cfg.UART_CH, fToLog=glb.toLog,
       tx=cfg.UART_PIN_TX, rx=cfg.UART_PIN_RX, baud=cfg.UART_BAUD
-    )
+    ))
+  RSrv.set_pulse_LED_hue(cfg.HUE_WAITING)
+  glb.toLog("Wait for ping from server ...")
+  if not Comm.wait_for_client(f_wait_ms=RSrv.sleep_ms):
+    glb.toLog("No client connection", errC=glb.ERR_CANNOT_CONNECT)
+    RSrv.deinit()
+    sys.exit()
+  else:
+    RSrv.set_pulse_LED_hue(cfg.HUE_NORMAL_BT)
+  glb.toLog("Ready.", head=False)
 
   try:
     is_running = True
     n_rounds = 0
-    cmdID = glb.CMD_NONE
+    msgID = com.MSG_NONE
 
     # Main loop
     glb.toLog("Entering loop ...", head=False)
@@ -110,12 +123,12 @@ if __name__ == "__main__":
         # Get sensor input and/or commands from client
         # ...
 
-        # Check if messge is available
-        if Msgr.available > 0:
-          data = Msgr.read()
+        # Check if message is available
+        if Comm.available > 0:
+          data = Comm.receive()
           if data is not None and len(data) > 0:
             # If message data ok, handle the message ...
-            errC, cmdID = handleCmd(data)
+            errC, msgID = handleCmd(data)
             if errC is not glb.ERR_OK:
               glb.toLog("Command not handled", errC=errC)
 
@@ -127,10 +140,10 @@ if __name__ == "__main__":
         # maximum number of rounds have been done, as a precaution
         is_running = (
             not RSrv.exit_requested
-            and not cmdID == glb.CMD_POWER_DOWN
+            and not msgID == com.MSG_POWER_DOWN
           )
         if cfg.DEBUG:
-          is_running = is_running and n_rounds < 15_000
+          is_running = is_running and n_rounds < 25_000
         n_rounds += 1
 
     except KeyboardInterrupt:

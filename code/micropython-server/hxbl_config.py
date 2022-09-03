@@ -38,6 +38,9 @@ LEDS_FREQ          = const(60)   # Hz (frequency of LED driver)
 ID_LED_CURR        = const(0)    # ID of LED for current load indicator
 ID_LED_VOLT        = const(1)    # ID of LED for servo voltage indicator
 ID_LED_PULSE       = const(5)    # ID of pulsing LED
+HUE_PREPARING      = 0.2
+HUE_NORMAL_BT      = 0.6
+HUE_WAITING        = 0.0
 
 # Pins for message UART
 UART_CH            = const(0)

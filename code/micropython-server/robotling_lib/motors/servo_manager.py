@@ -33,7 +33,7 @@ except ImportError:
 
 # pylint: disable=bad-whitespace
 __version__        = "0.1.9.0"
-RATE_MS            = const(10)  # 5=hangs, 15...20=ok, 25=not continues
+RATE_MS            = const(15)  # 5=hangs, 15...20=ok, 25=not continues
 HARDWARE_TIMER     = const(0)
 # pylint: enable=bad-whitespace
 
@@ -178,7 +178,7 @@ class ServoManager(object):
             elif trj == TRJ_RAMP_UP or trj == TRJ_RAMP_DOWN:
               assert False, "ULAB versions of `TRJ_RAMP_xxx` not implemented"
             _a = np.array(
-                [np.sin((i+1)/lim +ofs)**3 for i in range(nSteps-1)]
+                [np.sin((i+1)/lim +ofs) for i in range(nSteps-1)]
               )
             tnl[n] = np.sum(_a)
           else:
@@ -191,7 +191,7 @@ class ServoManager(object):
               lim = nSteps/(np.pi/2)
               ofs = np.pi/2
             _a = array.array(
-                "f", [np.sin((i+1)/lim +ofs)**3 for i in range(nSteps-1)]
+                "f", [np.sin((i+1)/lim +ofs) for i in range(nSteps-1)]
               )
             tnl[n] = 0
             for j in range(len(_a)):
@@ -259,7 +259,7 @@ class ServoManager(object):
               elif trj == TRJ_RAMP_DOWN:
                 lim = np.pi/2
                 ofs = np.pi/2
-              cpl[iSr] += ssl[iSr] *np.sin((iSt+1)/nST *lim +ofs)**3 /tnl[iSr]
+              cpl[iSr] += ssl[iSr] *np.sin((iSt+1)/nST *lim +ofs) /tnl[iSr]
               ser[sdl[iSr]].write_us(cpl[iSr])
             else:
               ser[sdl[iSr]].write_us(cpl[iSr])

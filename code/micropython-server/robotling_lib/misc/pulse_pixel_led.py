@@ -47,7 +47,7 @@ class PulsePixelLED_Hue(object):
     prevHue = self._hue
     if self._enablePulse:
       newHue = min(max(value, 0), 1)
-      if (self._hue -newHue) > 0.01 or not self._pulse:
+      if abs(self._hue -newHue) > 0.01 or not self._pulse:
         # New color and start pulsing
         self._hue = newHue
         self._iStep = 0

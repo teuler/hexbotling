@@ -42,7 +42,7 @@ class WalkEngine(object):
     self._isUpdateStatusLEDs = True
     self._tLastVoltUpdate = 0
     self._tLastCurrUpdate = 0
-    self._tLastCmd = 0
+    self._tLastMsg = 0
 
     # Define walk control variables
     self._vel = 1.
@@ -104,7 +104,7 @@ class WalkEngine(object):
     # Getting ready ...
     self._LEDs.start(cfg.LEDS_FREQ)
     self._Pixel.dim(cfg.LEDS_BRIGHTNESS)
-    self._Pixel.startPulse(0.1)
+    self._Pixel.startPulse(cfg.HUE_PREPARING)
     self._SM.define_servo_pos(cfg.SRV_RESTING_DEG)
     self.to_resting()
     self.to_neutral(dt_ms=1000)
@@ -194,7 +194,7 @@ class WalkEngine(object):
       dt, ang, trj = self._Gait.get_next_servo_pos(turn_dir=dr, rev=rv)
       dt_ms = min(max(int(dt /self._vel), 100), 1500)
       #print(dt, dt_ms, ang, self._vel)
-      #print("WE_MOVE", time.ticks_diff(time.ticks_ms(), self._tLastCmd), "ms")
+      #print("WE_MOVE", time.ticks_diff(time.ticks_ms(), self._tLastMsg), "ms")
       sm.trajectory = trj
       sm.move(cfg.SRV_ID, ang, dt_ms)
 
