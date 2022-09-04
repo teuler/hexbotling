@@ -135,8 +135,9 @@ def getCmdMsgFromJoystickInput():
     print("`A`                - Prints this help screenTurbo on/off")
     print("`B`                - Turbo on/off")
     print("`Y`                - Feet high/low")
-    print("`X`                - Shutdown")
+    print("`X`                - Shutdown robot")
     print("left hat up/down   - Change gait")
+    print("left joystick      - Walk forwards/backwards/turn")
     print("`Back`             - Exit program")
 
   # Button `B` toggles "turbo"
