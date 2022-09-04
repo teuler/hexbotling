@@ -10,6 +10,7 @@ The following videos are available:
 
 ### Release Notes
 
+* 2022-09-03 - First pre-release of the code for the remote controlled test version.
 * 2022-08-19 - `scad` code and `.stl` files updated (alternative foot). MicroPython code updated. Wiki pages describing the remote-controlled test version of the robot added.
 * 2022-07-10 - `.scad` code updated; holder for servo voltage converter added.
 * 2022-06-05 - `.stl` files for legs and body frame added; `.scad` code for these parts added as well.
