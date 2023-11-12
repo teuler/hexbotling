@@ -7,7 +7,7 @@
 # The MIT License (MIT)
 # Copyright (c) 2020-21 Thomas Euler
 # 2020-04-02, First version
-#
+# 2021-06-08, Slighly optimized version (gait for all legs computed at once)
 # ----------------------------------------------------------------------------
 import math
 try:
@@ -64,8 +64,8 @@ class HexaGait(object):
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   #@timed_function
-  def _generate_leg_gait_seq(self, GGN, iLeg):
-    """ Generate the gait sequence for the selected leg
+  def _generate_leg_gait_seq(self, GGN):
+    """ Generate the gait sequence for all legs
     """
     # Initialize
     inp = GGN._Inp
@@ -73,9 +73,6 @@ class HexaGait(object):
     iStep = self.iGaitStep
     nStep = self.nStepsInGait
     nPosL = self.nPosLifted
-    xyzGP = self.xyzPos[iLeg]
-    yGR = self.rotY[iLeg]
-    legNr = self.legNr[iLeg]
     tdl = self.TLDivFact
 
     # If gait is not in motion, reset travel parameters
@@ -83,58 +80,62 @@ class HexaGait(object):
       inp.x_zTravelLen.val = [0,0,0]
       inp.travelRotY.val = 0
 
-    # Leg middle up position
-    if ((isGIM and (nPosL == 1 or nPosL == 3) and iStep == legNr) or
-        (not isGIM and (iStep == legNr) and
-         ((abs(xyzGP[0]) > 2) or (abs(xyzGP[2]) > 2) or (abs(yGR) > 2)))):
-      # Up ...
-      y = -inp.legLiftHeight.val
-      self.xyzPos[iLeg] = np.array([0, -inp.legLiftHeight.val, 0])
-      self.rotY[iLeg] = 0
+    for iLeg in range(LEG_COUNT):
+      xyzGP = self.xyzPos[iLeg]
+      yGR = self.rotY[iLeg]
+      legNr = self.legNr[iLeg]
 
-    else:
-      # Optional half heigth rear
-      if (isGIM and
-          ((nPosL == 2 and iStep == legNr) or
-           (nPosL == 3 and
-            (iStep == legNr -1 or
-             iStep == legNr +nStep -1)))):
-        lh = inp.legLiftHeight.val
-        self.xyzPos[iLeg,0] = -inp.x_zTravelLen.x /2
-        self.xyzPos[iLeg,1] = -lh/2 if self.isHalfLiftHeigth else -lh
-        self.xyzPos[iLeg,2] = -inp.x_zTravelLen.z /2
-        self.rotY[iLeg] = -inp.travelRotY.val /2
+      # Leg middle up position
+      if ((isGIM and (nPosL == 1 or nPosL == 3) and iStep == legNr) or
+          (not isGIM and (iStep == legNr) and
+           ((abs(xyzGP[0]) > 2) or (abs(xyzGP[2]) > 2) or (abs(yGR) > 2)))):
+        # Up ...
+        y = -inp.legLiftHeight.val
+        self.xyzPos[iLeg] = np.array([0, -inp.legLiftHeight.val, 0])
+        self.rotY[iLeg] = 0
 
       else:
-        # Optional half heigth front
-        if (isGIM and nPosL >= 2 and
-            (iStep == legNr +1 or
-             iStep == legNr -(nStep -1))):
+        # Optional half heigth rear
+        if (isGIM and
+            ((nPosL == 2 and iStep == legNr) or
+             (nPosL == 3 and
+              (iStep == legNr -1 or
+               iStep == legNr +nStep -1)))):
           lh = inp.legLiftHeight.val
-          self.xyzPos[iLeg,0] = inp.x_zTravelLen.x /2
+          self.xyzPos[iLeg,0] = -inp.x_zTravelLen.x /2
           self.xyzPos[iLeg,1] = -lh/2 if self.isHalfLiftHeigth else -lh
-          self.xyzPos[iLeg,2] = inp.x_zTravelLen.z /2
-          self.rotY[iLeg] = inp.travelRotY.val /2
+          self.xyzPos[iLeg,2] = -inp.x_zTravelLen.z /2
+          self.rotY[iLeg] = -inp.travelRotY.val /2
+
         else:
-          # Leg front down position
-          if((iStep == (legNr +nPosL) or
-              iStep == (legNr -(nStep-nPosL))) and xyzGP[1] < 0):
+          # Optional half heigth front
+          if (isGIM and nPosL >= 2 and
+              (iStep == legNr +1 or
+               iStep == legNr -(nStep -1))):
+            lh = inp.legLiftHeight.val
             self.xyzPos[iLeg,0] = inp.x_zTravelLen.x /2
-            self.xyzPos[iLeg,1] = 0
+            self.xyzPos[iLeg,1] = -lh/2 if self.isHalfLiftHeigth else -lh
             self.xyzPos[iLeg,2] = inp.x_zTravelLen.z /2
             self.rotY[iLeg] = inp.travelRotY.val /2
           else:
-            # Move body forward
-            self.xyzPos[iLeg,0] = xyzGP[0] -inp.x_zTravelLen.x /tdl
-            self.xyzPos[iLeg,1] = 0
-            self.xyzPos[iLeg,2] = xyzGP[2] -inp.x_zTravelLen.z /tdl
-            self.rotY[iLeg] -= inp.travelRotY.val /tdl
+            # Leg front down position
+            if((iStep == (legNr +nPosL) or
+                iStep == (legNr -(nStep-nPosL))) and xyzGP[1] < 0):
+              self.xyzPos[iLeg,0] = inp.x_zTravelLen.x /2
+              self.xyzPos[iLeg,1] = 0
+              self.xyzPos[iLeg,2] = inp.x_zTravelLen.z /2
+              self.rotY[iLeg] = inp.travelRotY.val /2
+            else:
+              # Move body forward
+              self.xyzPos[iLeg,0] = xyzGP[0] -inp.x_zTravelLen.x /tdl
+              self.xyzPos[iLeg,1] = 0
+              self.xyzPos[iLeg,2] = xyzGP[2] -inp.x_zTravelLen.z /tdl
+              self.rotY[iLeg] -= inp.travelRotY.val /tdl
 
     # Advance to the next step
-    if iLeg == (LEG_COUNT -1):
-      self.iGaitStep += 1
-      if self.iGaitStep > nStep:
-        self.iGaitStep = 1
+    self.iGaitStep += 1
+    if self.iGaitStep > nStep:
+      self.iGaitStep = 1
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   def _is_step_complete(self):

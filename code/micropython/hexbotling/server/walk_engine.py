@@ -113,7 +113,7 @@ class WalkEngine(RobotlingBase):
 
     # Initialize remaining on-board hardware
     self.Buzzer = dio.Buzzer(rb.BUZZER)
-    self.Buzzer.mute = self.Cfg.NO_BUZZER
+    self.Buzzer.mute = not self.Cfg.SRV_USE_BUZZER
     self.Potentiometer = aio.AnalogIn(rb.ADC_POT)
     self._adc_battery = aio.AnalogIn(rb.ADC_BAT)
     self._MCP3208.channelMask = self.Cfg.SERVO_LOAD_MASK
@@ -285,6 +285,8 @@ class WalkEngine(RobotlingBase):
 
   @property
   def dialPosition(self):
+    if self.Cfg.SRV_DEBUG_NO_BODY:
+      return DialState.DEMO
     d = self.Potentiometer.value
     if d < 20:
       return DialState.STOP

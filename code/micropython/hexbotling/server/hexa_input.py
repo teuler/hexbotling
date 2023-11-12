@@ -17,13 +17,13 @@ try:
   # Micropython imports
   from micropython import const
   from hexa_global import *
-  from robotling_lib.misc.parameter import Parameter
+  from robotling_lib.misc.parameter import Parameter, Parameters
   from ulab import numpy as np
 except ModuleNotFoundError:
   # Standard Python imports
   const = lambda x : x
   from hexbotling.hexa_global import *
-  from hexbotling.robotling_lib.misc.parameter import Parameter
+  from hexbotling.robotling_lib.misc.parameter import Parameter, Parameters
   import numpy as np
 
 # ----------------------------------------------------------------------------
@@ -54,7 +54,7 @@ class HexaInput(object):
 
     # Current travel length (x,z), rotation (y), and height
     r = cfg.TRAVEL_X_Z_LIM
-    self.x_zTravelLen = Parameter(v3, [-r, r], 0, nb, "mm")
+    self.x_zTravelLen = Parameters(v3, [-r, r], 0, nb, "mm")
     r = cfg.TRAVEL_ROT_Y_LIM
     self.travelRotY = Parameter(0, [-r, r], 0, nb, "°")
     r = [cfg.LEG_LIFT_MIN, cfg.LEG_LIFT_MAX]
@@ -63,9 +63,9 @@ class HexaInput(object):
     # Global input for body position (xyzBodyPos[1] is calculated), pitch (x),
     # rotation (y), and roll (z)
     r = cfg.BODY_X_Z_POS_LIM
-    self.xyzBodyPos = Parameter(v3, [-r, r], unit="mm")
+    self.xyzBodyPos = Parameters(v3, [-r, r], unit="mm")
     r = cfg.BODY_XYZ_ROT_LIM
-    self.xyzBodyRot = Parameter(v3, [-r, r], unit="°")
+    self.xyzBodyRot = Parameters(v3, [-r, r], unit="°")
 
     # Movement speed via adjustible delay and input-depdent delay
     self.delaySpeed_ms = Parameter(80, [0, cfg.DELAY_SPEED_MAX], 0, nb, "ms")

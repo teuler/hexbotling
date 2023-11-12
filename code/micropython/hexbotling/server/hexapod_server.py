@@ -8,7 +8,9 @@
 # 2020-12-21, Moved pulsing functionality to `robotling_base`
 # 2021-01-17, Servo load measurement and calibration added
 # ----------------------------------------------------------------------------
+import gc
 import array
+import uasyncio
 from hexa_global import *
 from server.walk_engine import WalkEngine
 import robotling_lib.misc.rmsg as rmsg
@@ -28,13 +30,18 @@ class HexaPodServer(WalkEngine):
     super().__init__()
 
     # Initialize
-    self._isVerbose = self.Cfg.VERBOSE > 0
+    self._isVerbose = self.Cfg.VERBOSE >= 1
     self._isRunning = False
     self._isCalibrating = False
     self.HPR.dialState = DialState.NONE
     self.HPR.dialStateChanged = True
     self.HPR.hexState = HexState.Undefined
     self.Tele = None
+    self.GGN.collect_enabled = False
+
+    # Client commenuication related
+    self._sta_data = array.array("h", [0]*rmsg.STA_S_LEN)
+    self._msgToHandle = uasyncio.Event()
 
     # Create message objects for serial commands
     self._lastBLEConnectState = False
@@ -57,19 +64,21 @@ class HexaPodServer(WalkEngine):
     try:
       round = 0
       isHandled = False
+      isEngaged = False
       print("Entering loop ...")
 
-      if self.Cfg.DEBUG_LINK:
+      if self.Cfg.SRV_DEBUG_LINK:
         # Directly engages walk engine to test the client-server connection
         self.servoPower = True
         self.GGN.start()
         self.HPR.hexState = HexState.WalkEngineEngaged
 
       try:
+        tLoop0 = time.ticks_ms()
         while True:
           try:
             # Check if dial has changed
-            if self.HPR.dialStateChanged and not self.Cfg.DEBUG_LINK:
+            if self.HPR.dialStateChanged and not self.Cfg.SRV_DEBUG_LINK:
               self.HPR.dialStateChanged = False
 
               # Handle new dial selection
@@ -100,21 +109,46 @@ class HexaPodServer(WalkEngine):
                       .format(self.HPR.dialState,
                               HexStateStr[self.HPR.hexState]))
 
-            # If walk engine engaged, check for new command and handle it
-            if self.HPR.hexState == HexState.WalkEngineEngaged and self.mMsg:
-              if self.mMsg.receive():
-                isHandled = self.onSerialCommand()
-                if not isHandled:
-                  toLog("Command not handled", err=ErrCode.Cmd_NotHandled)
-              elif not self.mMsg.error == rmsg.Err.Ok:
-                toLog("Error parsing command", err=ErrCode.Cmd_ParsingErr)
-                self.Buzzer.warn()
-
             # Check if client connection has changed (i.e. internal <-> BLE);
             # (Do this only every cople of seconds and only if more than one
             #  port is available)
             if self.is_ble_defined and round % self.Cfg.CHECK_BLE_ROUNDS == 0:
-              self.check_ble_and_connect()
+                self.check_ble_and_connect()
+
+            # ***********
+            # NEW, INSTEAD OF COMMENTED BLOCK BELOW
+            # If walk engine is engaged, enable checking for client requests
+            isEngaged = self.HPR.hexState == HexState.WalkEngineEngaged
+            """
+            if isEngaged and self.mMsg:
+              # Check for serial command and respond as quickly as possible
+              if self.respondToSerialCommand():
+                pass
+                '''
+                print("collect")
+                gc.collect()
+                '''
+
+            # Check if a message needs to be handled
+            if self._msgToHandle.is_set():
+              try:
+                if not(isHandled := self.handleSerialCommand()):
+                  toLog("Command not handled", err=ErrCode.Cmd_NotHandled)
+                elif self.mMsg.error is not rmsg.Err.Ok:
+                  toLog("Error parsing command", err=ErrCode.Cmd_ParsingErr)
+                  self.Buzzer.warn()
+              finally:
+                self._msgToHandle.clear()
+            """
+            # If walk engine engaged, check for new command and handle it
+            if isEngaged and self.mMsg:
+              if self.mMsg.receive():
+                if not(isHandled := self.onSerialCommand()):
+                  toLog("Command not handled", err=ErrCode.Cmd_NotHandled)
+              elif not self.mMsg.error == rmsg.Err.Ok:
+                toLog("Error parsing command", err=ErrCode.Cmd_ParsingErr)
+                self.Buzzer.warn()
+            # ***********
 
             # During calibration, collect servo load data
             if self._isCalibrating and round % self.Cfg.CAL_COLCT_ROUNDS == 0:
@@ -125,10 +159,18 @@ class HexaPodServer(WalkEngine):
           finally:
             # Keep GGN running and make sure the robot's housekeeping gets
             # updated once per loop
-            if self.HPR.hexState == HexState.WalkEngineEngaged:
+            if isEngaged:
               self.GGN.spin()
             self.spin_ms()
             round += 1
+            '''
+            # Log loop timing
+            tLoop1 = time.ticks_ms()
+            tLoopDiff = time.ticks_diff(tLoop1, tLoop0)
+            s = "#" *int(tLoopDiff /10)
+            print("loop {0:10.0d}: {1} ms {2}".format(round-1, tLoopDiff, s))
+            tLoop0 = tLoop1
+            '''
 
       except KeyboardInterrupt:
         self._isRunning = False
@@ -152,6 +194,7 @@ class HexaPodServer(WalkEngine):
 
       # Keep robot's representation up to date
       self.updateRepresentation()
+      self._prepare_sta()
 
     # Change RGB pixel according to state
     col = HexStateCol[self.HPR.hexState]
@@ -160,15 +203,9 @@ class HexaPodServer(WalkEngine):
       col = PIXEL_COL_BLUETOOTH
     self.startPulsePixel(col)
 
-  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-  def _ack(self, cmd_tok):
-    self.mRpl.token = rmsg.TOK_ACK
-    self.mRpl.add_data("C", [cmd_tok])
-    self.mRpl.send(tout_ms=0)
-
-  def _sta(self):
-    self.mRpl.token = rmsg.TOK_STA
-    data = array.array("h", [0]*23)
+  #@timed_function
+  def _prepare_sta(self):
+    data = self._sta_data
     data[0] = self.HPR.hexState
     data[1] = self.GGN.state
     data[2] = self.HPR.dialState
@@ -180,17 +217,148 @@ class HexaPodServer(WalkEngine):
     data[8] = int(self.HPR.headPitchRoll_deg[2])
     data[9:] = self.HPR.servoLoad
     data[17:] = self.HPR.legYPos
-    self.mRpl.add_data("S", data)
-    self.mRpl.send(tout_ms=0)
 
+  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  #@timed_function
+  def _ack(self, cmd_tok, msg_count):
+    self.mRpl.token = rmsg.TOK_ACK
+    self.mRpl.add_data("C", [cmd_tok])
+    self.mRpl.send(tout_ms=0, out_count=msg_count, await_reply=False)
+
+  #@timed_function
+  def _sta(self, msg_count):
+    self.mRpl.token = rmsg.TOK_STA
+    self.mRpl.add_data("S", self._sta_data)
+    self.mRpl.send(tout_ms=0, out_count=msg_count, await_reply=False)
+
+  #@timed_function
+  def _ver(self, msg_count):
+    self.mRpl.token = rmsg.TOK_VER
+    self.mRpl.add_data("V", [self.HPR.softwareVer[0]])
+    self.mRpl.add_data("M", [self.memory[1] //1024])
+    self.mRpl.send(tout_ms=0, out_count=_count, await_reply=False)
+
+  '''
+  #@timed_function
+  def respondToSerialCommand(self):
+    """ Check for serial command, respond as quickly as possible and set the
+        `_msgToHandle` flag if more handling needs to be done.
+    """
+    self._msgToHandle.clear()
+    if not self.mMsg.receive():
+      return False
+    else:
+      try:
+        self.yellowLED.on()
+        _count = self.mMsg.count
+        _tok = self.mMsg.token
+        isDone = True
+        self.mRpl.reset()
+
+        if not self.mMsg.error == rmsg.Err.Ok:
+          # Error
+          toLog("Serial message error", ErrCode.Cmd_ParsingErr)
+        elif _tok == rmsg.TOK_STA or _tok == rmsg.TOK_GGQ:
+          # Status request
+          self._sta(_count)
+          isDone = _tok == rmsg.TOK_STA
+        elif _tok == rmsg.TOK_VER:
+          # Version information requested
+          self._ver(_count)
+        elif _tok in [rmsg.TOK_XP0, rmsg.TOK_CAL, rmsg.TOK_GG0, rmsg.TOK_GGP,
+                      rmsg.TOK_GGQ]:
+          # Other commands that are just confirmed here but handled later
+          self._ack(_tok, _count)
+          isDone = False
+        else:
+          toLog("Command unknown", ErrCode.CmdUnknown)
+          self.Buzzer.warn()
+
+      finally:
+        self._msgToHandle.state = not isDone
+        if isDone and self.mRpl.token is not rmsg.TOK_NONE and self._isVerbose:
+          toLog("Reply `{0}`".format(self.mRpl))
+        self.yellowLED.off()
+        return True
+
+  #@timed_function
+  def handleSerialCommand(self):
+    """ Handle new serial command, if not already quickly dealt with in
+        `respondToSerialCommand`
+    """
+    self._msgToHandle.clear()
+    try:
+      self.yellowLED.on()
+      _tok = self.mMsg.token
+      _msg = self.mMsg._msg
+      isDone = True
+
+      if _tok == rmsg.TOK_XP0:
+        # Move all legs to default positions
+        self.assumePosture(self.POST_NEUTRAL)
+
+      elif _tok == rmsg.TOK_CAL:
+        # Start/stop collecting calibration data
+        self.handleCalibration(_msg[0,0] > 0)
+
+      elif _tok == rmsg.TOK_GG0:
+        # Start or stop the gait generator
+        # >GG0 M=a,m G=g;
+        # TODO: Use other parameters, such as gait
+        if _msg[0,0] > 0:
+          self.GGN.start()
+        else:
+          self.GGN.stop()
+
+      elif _tok == rmsg.TOK_GGP:
+        # Change walk parameters of the gait generator (GGN), positions etc.
+        # >GGP B=bs,px,pz,bx,by,bz T=bo,lh,tx,tz,ty;
+        p0 = rmsg.TOK_addrPSetStart +rmsg.TOK_offsVals
+        p1 = p0 +_msg[p0 -rmsg.TOK_offsNVal] +rmsg.TOK_offsVals
+        bo_y = _msg[p1]
+        bs_y = _msg[p0]
+        bp_x_z = np.array([_msg[p0+1], 0, _msg[p0+2]])
+        br_xyz = np.array([_msg[p0+3], _msg[p0+4], _msg[p0+5]])
+        lh = _msg[p1+1]
+        tl_x_z = np.array([_msg[p1+2], 0, _msg[p1+3]])
+        tr_y = _msg[p1+4]
+        self.GGN.Input.set_pos(bo_y, bs_y, bp_x_z, br_xyz, lh, tl_x_z, tr_y)
+
+      elif _tok == rmsg.TOK_GGQ:
+        # Change only most important walk parameters and request status quickly
+        # >GGQ T=bo,lh,tx,tz,ty D=ds A=ta;
+        # <STA ...;
+        p0 = rmsg.TOK_addrPSetStart +rmsg.TOK_offsVals
+        p1 = p0 +_msg[p0 -rmsg.TOK_offsNVal] +rmsg.TOK_offsVals
+        bo_y = _msg[p0]
+        lh = _msg[p0+1]
+        tl_x_z = np.array([_msg[p0+2], 0, _msg[p0+3]])
+        tr_y = _msg[p0+4]
+        ds = _msg[p1]
+        self.GGN.Input.set_pos_timing(bo_y, lh, tl_x_z, tr_y, ds)
+
+      else:
+        toLog("Command unknown", ErrCode.CmdUnknown)
+        self.Buzzer.warn()
+
+    finally:
+      if isDone:
+        self.mMsg.reset(clearBuf=self._clearCmdBuffer)
+        if self.mRpl.token is not rmsg.TOK_NONE and self._isVerbose:
+          toLog("Reply `{0}`".format(self.mRpl))
+      self.yellowLED.off()
+    return isDone
+  '''
+
+  #@timed_function
   def onSerialCommand(self):
     """ Handle new serial command
     """
     isDone = False
-    #try:
-    if True:
+    try:
       self.yellowLED.on()
       self.mRpl.reset()
+      _count = self.mMsg.count
       isDone = False
 
       if not self.mMsg.error == rmsg.Err.Ok:
@@ -199,25 +367,25 @@ class HexaPodServer(WalkEngine):
       elif self.mMsg.token == rmsg.TOK_VER:
         # Version information requested
         self.mRpl.token = rmsg.TOK_VER
-        self.mRpl.add_data("V", [self._HPR.softwareVer])
-        self.mRpl.add_data("M", [self.memory[1]])
-        self.mRpl.send(tout_ms=0)
+        self.mRpl.add_data("V", [self.HPR.softwareVer[0]])
+        self.mRpl.add_data("M", [self.memory[1] //1024])
+        self.mRpl.send(tout_ms=0, out_count=_count, await_reply=False)
         isDone = True
 
       elif self.mMsg.token == rmsg.TOK_XP0:
         # Move all legs to default positions
-        self._ack(rmsg.TOK_XP0)
+        self._ack(rmsg.TOK_XP0, _count)
         self.assumePosture(self.POST_NEUTRAL)
         isDone = True
 
       elif self.mMsg.token == rmsg.TOK_STA:
         # Status request
-        self._sta()
+        self._sta(_count)
         isDone = True
 
       elif self.mMsg.token == rmsg.TOK_CAL:
         # Start/stop collecting calibration data
-        self._ack(rmsg.TOK_CAL)
+        self._ack(rmsg.TOK_CAL, _count)
         self.handleCalibration(self.mMsg[0,0] > 0)
         isDone = True
 
@@ -225,7 +393,7 @@ class HexaPodServer(WalkEngine):
         # Start or stop the gait generator
         # >GG0 M=a,m G=g;
         # TODO: Use other parameters, such as gait
-        self._ack(rmsg.TOK_GG0)
+        self._ack(rmsg.TOK_GG0, _count)
         if self.mMsg[0,0] > 0:
           self.GGN.start()
         else:
@@ -235,7 +403,7 @@ class HexaPodServer(WalkEngine):
       elif self.mMsg.token == rmsg.TOK_GGP:
         # Change walk parameters of the gait generator (GGN), positions etc.
         # >GGP B=bs,px,pz,bx,by,bz T=bo,lh,tx,tz,ty;
-        self._ack(rmsg.TOK_GGP)
+        self._ack(rmsg.TOK_GGP, _count)
         msg = self.mMsg._msg
         p0 = rmsg.TOK_addrPSetStart +rmsg.TOK_offsVals
         p1 = p0 +msg[p0 -rmsg.TOK_offsNVal] +rmsg.TOK_offsVals
@@ -262,18 +430,21 @@ class HexaPodServer(WalkEngine):
         tr_y = msg[p0+4]
         ds = msg[p1]
         self.GGN.Input.set_pos_timing(bo_y, lh, tl_x_z, tr_y, ds)
-        self._sta()
+        self._sta(_count)
         isDone = True
 
       else:
         toLog("Command unknown", ErrCode.CmdUnknown)
         self.Buzzer.warn()
-    #finally:
-    if isDone:
-      self.mMsg.reset(clearBuf=self._clearCmdBuffer)
-      if self.mRpl.token is not rmsg.TOK_NONE and self._isVerbose:
-        toLog("Reply `{0}`".format(self.mRpl))
-    self.yellowLED.off()
+    finally:
+      if isDone:
+        self.mMsg.reset(clearBuf=self._clearCmdBuffer)
+        if self.mRpl.token is not rmsg.TOK_NONE and True: #self._isVerbose:
+          print("Reply", self.mRpl.token)
+          '''
+          toLog("Reply `{0}`".format(self.mRpl))
+          '''
+      self.yellowLED.off()
     return isDone
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -303,7 +474,7 @@ class HexaPodServer(WalkEngine):
       self.mMsg = rmsg.RMsgUARTMPy(self._uart, typeMsgOut=rmsg.MSG_Server)
       self.mRpl = rmsg.RMsgUARTMPy(self._uart, typeMsgOut=rmsg.MSG_Server)
       self._lastBLEConnectState = False
-      self._clearCmdBuffer = False
+      self._clearCmdBuffer = True #False
       toLog("Autonomous mode ...")
 
   # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
